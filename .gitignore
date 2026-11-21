@@ -1,0 +1,5 @@
+node_modules/
+dist/
+.deeppi/
+.env
+.env.*
