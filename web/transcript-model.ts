@@ -100,6 +100,23 @@ export function buildRounds(messages: readonly MessageView[]): TranscriptRound[]
   return rounds;
 }
 
+export type RoundActivity = { kind: 'thinking' | 'tool'; message: MessageView };
+
+export function roundContent(round: TranscriptRound) {
+  const activity: RoundActivity[] = [];
+  const body: MessageView[] = [];
+  for (const block of round.blocks) {
+    if (block.kind === 'tools') {
+      for (const message of block.tools) activity.push({ kind: 'tool', message });
+    } else {
+      const { message } = block;
+      if (message.thinking?.trim()) activity.push({ kind: 'thinking', message });
+      if (message.text.trim()) body.push(message);
+    }
+  }
+  return { activity, body };
+}
+
 export function selectRoundWindow(
   rounds: readonly TranscriptRound[],
   options: { revealedEarlier?: number } = {},

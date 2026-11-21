@@ -1,6 +1,8 @@
 import { randomUUID } from 'node:crypto';
 import { AppError, plainObject } from '../settings.mjs';
 import { assistantView, projectBranch, toolView, toolViewId } from './transcript.mjs';
+import { autoCompactionThreshold, defaultContextPolicy, nativeCompaction, updateContextPolicy } from './context-policy.mjs';
+import { expandSkillMentions, slashCommand, webCommands } from './web-input.mjs';
 
 const settingsEntry = 'deeppi-web-settings';
 const defaultLevels = ['off', 'minimal', 'low', 'medium', 'high', 'xhigh', 'max'];
@@ -15,33 +17,37 @@ function text(value, limit, label, optional = false) {
   return clean;
 }
 
-export function createPiHost({ pi, addons, resources, catalog, hub, thinkingLevels, clampThinking, allowEnvironmentModel, qq }) {
-  let ctx, commands, scheduled, draft, startTimer, exclusive;
+export function createPiHost({ pi, addons, resources, catalog, hub, thinkingLevels, clampThinking, allowEnvironmentModel, qq, webModels, stripFrontmatter }) {
+  let ctx, commands, scheduled, draft, startTimer, exclusive, compactionTimer, lastAutoLeaf;
   let status = 'idle';
   let systemPrompt = '', lastError;
+  let policy = defaultContextPolicy;
   let memoLeaf, memoManager, memoBranch = [];
   const pendingTools = new Map();
 
   const id = () => ctx?.sessionManager.getSessionId();
   const levels = model => model ? thinkingLevels?.(model) ?? (model.reasoning ? defaultLevels : ['off']) : ['off'];
   const realStatus = () => status === 'idle' && !ctx.isIdle() ? 'running' : status;
+  const isModel = model => !!model && model.api !== 'unknown';
+  const permitted = model => isModel(model) && (!allowEnvironmentModel || allowEnvironmentModel(model));
+  const currentModel = () => permitted(ctx.model) ? ctx.model : null;
   const requireModel = () => {
-    if (!ctx.model) throw new AppError(400, '请先在 Pi 中选择并配置模型。');
-    if (allowEnvironmentModel && !allowEnvironmentModel(ctx.model)) {
-      throw new AppError(400, '此模型配置了配套环境端点；请在 Pi 中选择 Deeppi 环境端点模型。');
-    }
+    if (!isModel(ctx.model)) throw new AppError(400, '请先在网页模型设置或 Pi 终端配置并选择模型。');
+    if (!permitted(ctx.model)) throw new AppError(400, '请切换到与环境凭据配对的 Deeppi 模型端点。');
     return ctx.model;
   };
+  const registeredCommands = () => pi.getCommands?.() ?? [];
+  const modelFromRef = ref => modelChoices().find(model => model.provider === ref.provider && model.id === ref.id);
   const requireIdle = () => {
     if (exclusive || realStatus() !== 'idle') throw new AppError(409, '请等待 Pi 当前操作完成。');
   };
   const modelChoices = () => {
     const scoped = (ctx.scopedModels ?? []).map(item => item.model).filter(Boolean);
     const eligible = ctx.modelRegistry.getAvailable();
-    const available = scoped.length ? scoped : eligible;
+    const available = scoped.length ? [...scoped, ...eligible.filter(model => model.provider.startsWith('deeppi-web-'))] : eligible;
     const choices = new Map();
-    for (const model of [...available, ...(ctx.model ? [ctx.model] : [])]) {
-      if (allowEnvironmentModel && !allowEnvironmentModel(model)) continue;
+    for (const model of [...available, ctx.model]) {
+      if (!permitted(model)) continue;
       choices.set(`${model.provider}\n${model.id}`, model);
     }
     return [...choices.values()];
@@ -59,6 +65,14 @@ export function createPiHost({ pi, addons, resources, catalog, hub, thinkingLeve
   function savedSettings() {
     const entry = ctx.sessionManager.getBranch().findLast(item => item.type === 'custom' && item.customType === settingsEntry);
     systemPrompt = typeof entry?.data?.systemPrompt === 'string' ? entry.data.systemPrompt.slice(0, 32_000) : '';
+    try { policy = updateContextPolicy(defaultContextPolicy, entry?.data?.context ?? {}); }
+    catch { policy = defaultContextPolicy; }
+  }
+  function contextSnapshot(model = currentModel()) {
+    const usage = ctx.getContextUsage();
+    const window = usage?.contextWindow || model?.contextWindow || null;
+    return { tokens: usage?.tokens ?? null, window, policy, thresholdTokens: autoCompactionThreshold(policy, window),
+      native: nativeCompaction(pi.getSettings?.(), model) };
   }
 
   function messages() {
@@ -78,16 +92,17 @@ export function createPiHost({ pi, addons, resources, catalog, hub, thinkingLeve
     const active = new Set(pi.getActiveTools());
     const tools = pi.getAllTools().map(tool => ({ name: tool.name, description: tool.description ?? '',
       active: active.has(tool.name), exposure: typeof tool.exposure === 'string' ? tool.exposure : undefined }));
-    const context = ctx.getContextUsage();
+    const model = currentModel();
     return {
       id: id(), title: pi.getSessionName() || timeline.find(message => message.role === 'user')?.text.trim().replace(/\s+/gu, ' ').slice(0, 70) || '当前 Pi 会话',
       cwd: ctx.cwd, status: realStatus(), connected: true,
-      model: ctx.model ? copyModel(ctx.model) : null,
-      models: modelChoices().map(model => ({ ...copyModel(model), reasoning: Boolean(model.reasoning),
-        contextWindow: model.contextWindow, maxOutputTokens: model.maxTokens, levels: levels(model) })),
-      thinking: ctx.thinkingLevel ?? pi.getThinkingLevel(), levels: levels(ctx.model), systemPrompt, tools,
+      model: model ? copyModel(model) : null,
+      models: modelChoices().map(option => ({ ...copyModel(option), reasoning: Boolean(option.reasoning),
+        contextWindow: option.contextWindow, maxOutputTokens: option.maxTokens, levels: levels(option) })),
+      webModels: webModels?.snapshot(), commands: webCommands(registeredCommands()),
+      thinking: model ? ctx.thinkingLevel ?? pi.getThinkingLevel() : 'off', levels: levels(model), systemPrompt, tools,
       ...resources.snapshot(ctx, tools), messages: timeline,
-      context: { tokens: context?.tokens ?? null, window: context?.contextWindow ?? ctx.model?.contextWindow ?? null },
+      context: contextSnapshot(model),
       addons: addons.snapshot(), error: lastError,
     };
   }
@@ -117,14 +132,62 @@ export function createPiHost({ pi, addons, resources, catalog, hub, thinkingLeve
     if (commandContext.sessionManager.getSessionId() === id()) commands = commandContext;
   }
 
-  function prompt(input) {
-    requireModel();
-    if (exclusive || status === 'compacting' || status === 'stopping') throw new AppError(409, '请等待 Pi 当前操作完成。');
+  const panelResult = panel => ({ ...ok, panel });
+  function commandContext() {
+    if (!commands) throw new AppError(409, '请在当前 Pi 终端再次运行 /deeppi，授权网页控制会话。');
+    return commands;
+  }
+  async function runCommand({ name, args }, signal) {
+    const panels = { model: 'model', thinking: 'model', settings: 'model', session: 'conversation', context: 'context', name: 'conversation',
+      resume: 'sessions', mcp: 'resources', 'deeppi-addons': 'tools', help: 'help' };
+    if (Object.hasOwn(panels, name) && !args) return panelResult(panels[name]);
+    if (name === 'stop') return stop();
+    if (name === 'compact' || name === 'deeppi-compact') return compact({ focus: args, enhanced: name === 'deeppi-compact' });
+    if (name === 'copy') {
+      const reply = messages().findLast(message => message.role === 'assistant' && message.state !== 'running' && message.text.trim());
+      return reply ? { ...ok, copy: reply.text } : { ...ok, notice: '还没有可复制的助手回复。' };
+    }
+    requireIdle();
+    exclusive = name;
+    try {
+      if (name === 'name') return await settings({ title: args });
+      if (name === 'thinking') return await settings({ thinking: args });
+      if (name === 'model') {
+        const choices = modelChoices();
+        const exact = choices.find(model => `${model.provider}/${model.id}` === args);
+        const matches = exact ? [exact] : choices.filter(model => model.id === args);
+        if (matches.length !== 1) throw new AppError(400, '找不到唯一的模型。请使用 /model 服务商/模型ID，或打开模型面板。');
+        return await settings({ model: matches[0] });
+      }
+      if (name === 'resume') return await switchSession({ id: args }, signal);
+      if (name === 'new' || name === 'reload') {
+        if (args) throw new AppError(400, `/${name} 不需要参数。`);
+        const native = commandContext();
+        if (name === 'reload') { await native.reload(); return { ...ok, notice: 'Pi 已重载资源。' }; }
+        const result = await native.newSession({ withSession: async replacement => hub.bindCommands(replacement) });
+        if (result.cancelled) throw new AppError(409, 'Pi 取消了新建会话。');
+        return { ...ok, sessionChanged: true };
+      }
+      throw new AppError(400, `/${name} 不接受此参数。`);
+    } finally { exclusive = undefined; publish(); }
+  }
+
+  async function prompt(input, signal) {
     const clean = text(input.text, 120_000, '消息');
     if (input.mode !== undefined && input.mode !== 'steer' && input.mode !== 'followUp') throw new AppError(400, '发送方式无效。');
-    if (realStatus() !== 'idle' && !input.mode) throw new AppError(409, 'Pi 正在生成，请选择立即引导或下轮发送。');
+    const registered = registeredCommands();
+    const slash = slashCommand(clean, registered);
+    if (slash?.kind === 'native') return runCommand(slash, signal);
+    if (exclusive || status === 'compacting' || status === 'stopping') throw new AppError(409, '请等待 Pi 当前操作完成。');
+    requireModel();
     const skill = text(input.skill, 128, '技能', true);
-    if (skill && !resources.skills().some(entry => entry.name === skill)) throw new AppError(400, '技能不属于当前 Pi 会话。');
+    if (skill && (slash || !resources.skills().some(entry => entry.name === skill))) throw new AppError(400, '请选择当前 Pi 会话中的技能。');
+    const expandNative = Boolean(skill || slash);
+    const literal = clean.startsWith('\\/') ? clean.slice(1) : clean;
+    const origin = ctx;
+    const value = skill ? `/skill:${skill} ${clean}` : expandNative ? clean : await expandSkillMentions(literal, registered, stripFrontmatter);
+    signal?.throwIfAborted();
+    if (origin !== ctx || !hub.isBound(host) || exclusive || status === 'compacting' || status === 'stopping') throw new AppError(409, 'Pi 会话或运行状态已经更改，请重试。');
     lastError = undefined;
     if (realStatus() === 'idle') {
       status = 'running';
@@ -136,8 +199,7 @@ export function createPiHost({ pi, addons, resources, catalog, hub, thinkingLeve
       }, 3500);
       startTimer.unref();
     }
-    const value = skill ? `/skill:${skill} ${clean}` : clean;
-    const options = { deliverAs: input.mode, expandPromptTemplates: Boolean(skill) };
+    const options = { deliverAs: input.mode ?? 'followUp', expandPromptTemplates: expandNative };
     try {
       const sent = commands?.sendUserMessage ? commands.sendUserMessage(value, options) : pi.sendUserMessage(value, options);
       void sent?.catch(() => {
@@ -168,7 +230,7 @@ export function createPiHost({ pi, addons, resources, catalog, hub, thinkingLeve
   function compact(input) {
     requireIdle();
     requireModel();
-    const focus = text(input.focus, 8000, '压缩关注点', true);
+    const focus = text(input.focus, 8000, '压缩关注点', true) || policy.focus || undefined;
     if (input.enhanced !== undefined && typeof input.enhanced !== 'boolean') throw new AppError(400, '压缩模式无效。');
     if (input.enhanced && !addons.snapshot().compact) throw new AppError(403, '请先启用 Deeppi 增强压缩。');
     lastError = undefined;
@@ -206,6 +268,7 @@ export function createPiHost({ pi, addons, resources, catalog, hub, thinkingLeve
   async function settings(patch) {
     const title = text(patch.title, 200, '标题', true);
     const promptText = text(patch.systemPrompt, 32_000, '系统提示词补充', true);
+    const nextPolicy = patch.context === undefined ? policy : updateContextPolicy(policy, patch.context);
     let model;
     if (patch.model !== undefined) {
       if (!plainObject(patch.model)) throw new AppError(400, '模型不可用。');
@@ -225,11 +288,40 @@ export function createPiHost({ pi, addons, resources, catalog, hub, thinkingLeve
     if (patch.thinking !== undefined) pi.setThinkingLevel(patch.thinking);
     if (patch.activeTools) pi.setActiveTools([...new Set(patch.activeTools)]);
     if (title !== undefined) pi.setSessionName(title);
-    if (promptText !== undefined) {
-      pi.appendEntry(settingsEntry, { systemPrompt: promptText });
-      systemPrompt = promptText;
+    if (promptText !== undefined || patch.context !== undefined) {
+      pi.appendEntry(settingsEntry, { systemPrompt: promptText ?? systemPrompt, context: nextPolicy });
+      systemPrompt = promptText ?? systemPrompt;
+      policy = nextPolicy;
     }
     return ok;
+  }
+
+  async function configureModel(input) {
+    if (!webModels) throw new AppError(503, '网页模型配置未加载。');
+    if (input.use !== undefined && typeof input.use !== 'boolean') throw new AppError(400, '切换模型选项无效。');
+    const selected = currentModel();
+    const ref = await webModels.apply(input, selected);
+    if (!ref || (!input.use && ref.provider !== selected?.provider)) return ok;
+    const registered = ctx.modelRegistry.find?.(ref.provider, ref.id) ?? modelFromRef(ref);
+    if (!permitted(registered) || !await pi.setModel(registered)) {
+      return { ...ok, notice: '配置已保存，但 Pi 未能切换到此模型。请检查凭据并重新选择。' };
+    }
+    return ok;
+  }
+
+  function autoCompact(event) {
+    idle();
+    if (event.aborted || policy.threshold === null) return;
+    clearImmediate(compactionTimer);
+    compactionTimer = setImmediate(() => {
+      if (!hub.isBound(host) || exclusive || lastError || realStatus() !== 'idle' || ctx.hasPendingMessages?.() || !currentModel()) return;
+      const { thresholdTokens, tokens } = contextSnapshot();
+      const leaf = ctx.sessionManager.getLeafId();
+      if (thresholdTokens === null || tokens === null || tokens < thresholdTokens || !leaf || leaf === lastAutoLeaf) return;
+      lastAutoLeaf = leaf;
+      try { compact({ focus: policy.focus }); }
+      catch { lastError = '会话自动压缩未能开始，可在上下文面板重试。'; publish(); }
+    });
   }
 
   async function switchSession(input, signal) {
@@ -245,7 +337,7 @@ export function createPiHost({ pi, addons, resources, catalog, hub, thinkingLeve
   }
 
   async function action(name, input, signal) {
-    if (name === 'prompt') return prompt(input);
+    if (name === 'prompt') return prompt(input, signal);
     if (name === 'stop') return stop();
     if (name === 'compact') return compact(input);
     if (name === 'probe') return probe(signal);
@@ -258,11 +350,12 @@ export function createPiHost({ pi, addons, resources, catalog, hub, thinkingLeve
       }
       return qq.update(input, signal);
     }
-    if (!['settings', 'resources', 'addons', 'switch'].includes(name)) throw new AppError(404, '接口不存在。');
+    if (!['settings', 'resources', 'addons', 'switch', 'models'].includes(name)) throw new AppError(404, '接口不存在。');
     requireIdle();
     exclusive = name;
     try {
       if (name === 'settings') return await settings(input);
+      if (name === 'models') return await configureModel(input);
       if (name === 'switch') return await switchSession(input, signal);
       if (name === 'resources') return await resources.apply(ctx, input);
       await addons.update(ctx, input);
@@ -275,6 +368,7 @@ export function createPiHost({ pi, addons, resources, catalog, hub, thinkingLeve
   pi.on('session_start', (_event, current) => attach(current));
   pi.on('session_shutdown', event => {
     clearImmediate(scheduled);
+    clearImmediate(compactionTimer);
     clearTimeout(startTimer);
     hub.detach(host, event.reason);
     return qq?.detach(resolveQqRoute, event.reason);
@@ -318,7 +412,7 @@ export function createPiHost({ pi, addons, resources, catalog, hub, thinkingLeve
       timestamp: view.timestamp, content: event.result?.content, state: event.isError ? 'error' : 'done' }), args: view.args });
     publish();
   });
-  pi.on('agent_settled', idle);
+  pi.on('agent_settled', autoCompact);
   pi.events.on('deeppi:addons-changed', publish);
   for (const event of ['session_info_changed', 'session_compact', 'session_compact_failed', 'model_select', 'thinking_level_select', 'mcp_servers_change']) pi.on(event, publish);
   return host;

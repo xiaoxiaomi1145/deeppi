@@ -8,6 +8,7 @@ import { piApi } from './transport';
 import { Resources } from './Resources';
 import { ThinkingSlider } from './ThinkingSlider';
 import { QqSettings } from './QqSettings';
+import { WebModels } from './WebModels';
 import styles from './Pi.module.css';
 
 const sections = { model: '模型', conversation: '会话', tools: '工具', resources: '资源', qq: 'QQ', appearance: '外观' } as const;
@@ -143,7 +144,7 @@ export function PiSettings({ state, section: first, writable, connected, theme, 
             <div className={styles.sectionHeading}><div><h3>连接测试</h3><p className={styles.note}>{modelChanged ? '先保存模型，再测试。' : '用 Pi 已配置的凭据请求当前模型，不写入对话。'}</p></div>
               <button type="button" className={styles.secondary} disabled={probing || !state.model || modelChanged} onClick={() => void testConnection()}>{probing ? '测试中…' : '测试连接'}</button></div>
             {probeResult && <p className={probeResult.ok ? styles.notice : styles.error} role="status">{probeResult.text}</p>}
-            {!state.models.length && <p className={styles.note}>若目录为空，请先在 Pi 终端配置服务商或登录，再打开网页。</p>}
+            {!state.models.length && <p className={styles.note}>尚无可用模型。可在下方添加自定义模型，或在 Pi 终端登录官方服务商。</p>}
           </>}
           {section === 'conversation' && <>
             <legend>会话信息</legend>
@@ -162,6 +163,7 @@ export function PiSettings({ state, section: first, writable, connected, theme, 
         </fieldset>
         {error && <p className={styles.error} role="alert">{error}</p>}
       </form>}
+      {section === 'model' && <WebModels state={state} writable={writable && !saving} />}
       {section === 'tools' && <Addons state={state} writable={writable && !saving} />}
       {section === 'resources' && <Resources state={state} writable={writable && !saving} />}
       {section === 'qq' && <QqSettings state={state} connected={connected} />}

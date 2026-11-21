@@ -3,6 +3,7 @@ import test from 'node:test';
 import {
   buildRounds,
   selectRoundWindow,
+  roundContent,
   summarizeTools,
   preserveScrollAnchor,
   isNearBottom,

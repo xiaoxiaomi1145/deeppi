@@ -2,6 +2,7 @@ import { useEffect, useReducer, useState } from 'react';
 import { ApiError, errorText } from '../api';
 import type { Delta } from '../types';
 import { applyPiDeltas, type PiState } from './model';
+import { firstRetryMs, retryAfter, shouldWakeStream, staleStream, watchdogMs, type StreamHealth } from './stream-health';
 import { hasAccess, piApi } from './transport';
 
 export type LinkStatus = 'connecting' | 'open' | 'retrying' | 'closed' | 'needsLink';
@@ -40,14 +41,15 @@ export function usePiSession() {
       setState(null);
       return;
     }
-    const lifetime = new AbortController();
-    const { signal } = lifetime;
+    type Connection = StreamHealth & { controller: AbortController };
+    let stream: Connection | undefined;
+    let stopped = false;
+    let terminal = false;
     let retryTimer = 0;
-    let connectController: AbortController | undefined;
+    let retryDelay = firstRetryMs;
     let frame = 0;
     let pending: Delta[] = [];
-    let retryDelay = 450;
-    let initialized = false;
+
     function dropPending() {
       if (frame) cancelAnimationFrame(frame);
       frame = 0;
@@ -56,78 +58,107 @@ export function usePiSession() {
     function flush() {
       if (frame) cancelAnimationFrame(frame);
       frame = 0;
-      if (!pending.length || signal.aborted) return;
+      if (!pending.length || stopped) return;
       const batch = pending;
       pending = [];
-      setState((previous) => previous ? applyPiDeltas(previous, batch) : previous);
+      setState(previous => previous ? applyPiDeltas(previous, batch) : previous);
     }
-    function retry() {
-      if (signal.aborted) return;
-      retryTimer = window.setTimeout(() => void connect(), retryDelay);
-      retryDelay = Math.min(retryDelay * 2, 5000);
+    function cancelStream() {
+      const abandoned = stream;
+      stream = undefined;
+      abandoned?.controller.abort();
+    }
+    function scheduleRetry(message: string) {
+      if (stopped || terminal || retryTimer) return;
+      setLink('retrying');
+      setLinkError(message);
+      retryTimer = window.setTimeout(() => {
+        retryTimer = 0;
+        void connect();
+      }, retryDelay);
+      retryDelay = retryAfter(retryDelay);
+    }
+    function terminate(next: 'needsLink' | 'closed') {
+      terminal = true;
+      cancelStream();
+      if (next === 'needsLink') { dropPending(); setState(null); }
+      else flush();
+      setLink(next);
+      setLinkError('');
     }
     async function connect() {
-      if (signal.aborted) return;
-      const controller = new AbortController();
-      connectController = controller;
-      let closed = false;
-      let snapshotSeen = false;
+      if (stopped || terminal || stream) return;
+      const now = Date.now();
+      const current: Connection = { controller: new AbortController(), startedAt: now, lastActivity: now, ready: false };
+      stream = current;
       try {
-        if (!initialized) {
-          const initial = await piApi.state(controller.signal);
-          if (signal.aborted) return;
-          if (!isState(initial)) throw new Error('无效的 Pi 状态。');
-          setState(initial);
-          initialized = true;
-        }
         await piApi.events((event, data) => {
-          if (signal.aborted || closed) return;
+          if (stream !== current) return;
           if (event === 'state' && isState(data)) {
-            // Complete snapshots supersede fragments already delivered, including queued frames.
+            // A complete snapshot supersedes deltas queued before it.
             dropPending();
-            snapshotSeen = true;
-            retryDelay = 450;
+            current.ready = true;
+            retryDelay = firstRetryMs;
             setState(data);
             setLink('open');
             setLinkError('');
-          } else if (event === 'delta' && snapshotSeen && isDelta(data)) {
+          } else if (event === 'delta' && current.ready && isDelta(data)) {
             pending.push(data);
             if (pending.length >= 128) flush();
             else if (!frame) frame = requestAnimationFrame(flush);
-          } else if (event === 'closed') {
-            closed = true;
-            controller.abort();
-          }
-        }, controller.signal);
+          } else if (event === 'closed') terminate('closed');
+        }, current.controller.signal, () => { current.lastActivity = Date.now(); });
       } catch (cause) {
-        if (signal.aborted) return;
-        if (!closed && cause instanceof ApiError && cause.status === 401) {
-          dropPending();
-          setState(null);
-          setLink('needsLink');
-          setLinkError('');
-          return;
-        }
-        if (!closed) setLinkError(errorText(cause));
-      }
-      if (signal.aborted) return;
-      flush();
-      if (closed) {
-        setLink('closed');
-        setLinkError('');
+        if (stream !== current) return;
+        if (cause instanceof ApiError && cause.status === 401) { terminate('needsLink'); return; }
+        setLinkError(errorText(cause));
+        stream = undefined;
+        flush();
+        scheduleRetry(errorText(cause));
         return;
       }
-      setLink('retrying');
-      retry();
+      if (stream !== current) return;
+      stream = undefined;
+      flush();
+      scheduleRetry('Pi 实时连接已断开。');
     }
+    const watchdog = window.setInterval(() => {
+      if (!stream || !staleStream(stream, Date.now())) return;
+      const ready = stream.ready;
+      flush();
+      cancelStream();
+      scheduleRetry(ready ? '未收到 Pi 心跳。' : 'Pi 连接超时。');
+    }, watchdogMs);
+    function wake(reason: 'visible' | 'online') {
+      if (!shouldWakeStream(reason, stream, Date.now(), navigator.onLine !== false, terminal || stopped)) return;
+      flush();
+      cancelStream();
+      clearTimeout(retryTimer);
+      retryTimer = 0;
+      retryDelay = firstRetryMs;
+      setLink('retrying');
+      setLinkError('');
+      void connect();
+    }
+    function visible() { if (document.visibilityState === 'visible') wake('visible'); }
+    const online = () => wake('online');
+    document.addEventListener('visibilitychange', visible);
+    window.addEventListener('focus', visible);
+    window.addEventListener('pageshow', visible);
+    window.addEventListener('online', online);
     setLink('connecting');
     setLinkError('');
     void connect();
     return () => {
-      lifetime.abort();
-      connectController?.abort();
+      stopped = true;
+      cancelStream();
       clearTimeout(retryTimer);
+      clearInterval(watchdog);
       dropPending();
+      document.removeEventListener('visibilitychange', visible);
+      window.removeEventListener('focus', visible);
+      window.removeEventListener('pageshow', visible);
+      window.removeEventListener('online', online);
     };
   }, [attempt]);
 

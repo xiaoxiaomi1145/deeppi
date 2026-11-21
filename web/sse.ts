@@ -1,4 +1,4 @@
-export async function readEvents(body: ReadableStream<Uint8Array>, onEvent: (event: string, data: unknown) => void) {
+export async function readEvents(body: ReadableStream<Uint8Array>, onEvent: (event: string, data: unknown) => void, onActivity?: () => void) {
   const reader = body.getReader();
   const decoder = new TextDecoder();
   let pending = '';
@@ -6,6 +6,7 @@ export async function readEvents(body: ReadableStream<Uint8Array>, onEvent: (eve
     for (;;) {
       const { done, value } = await reader.read();
       if (done) break;
+      if (value.byteLength) onActivity?.();
       pending += decoder.decode(value, { stream: true });
       // The local server emits LF-delimited frames, with JSON on a single data line.
       let boundary: number;

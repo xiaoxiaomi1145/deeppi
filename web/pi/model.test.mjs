@@ -34,6 +34,21 @@ test('send uses an explicit delivery mode only during streaming, preserving the 
   assert.equal(promptPayload('  ', 'idle', 'steer', ''), null);
 });
 
+test('busy primary send queues, accelerated send steers, and native slash controls do not need a model', async () => {
+  const { composerControl, inputToken, insertInputToken, inputSuggestions } = await import('./input-model.ts');
+  assert.deepEqual(composerControl('running', true, false), { primary: 'send', label: '排队发送', alternate: true });
+  assert.deepEqual(composerControl('running', false, false), { primary: 'stop', label: '停止当前操作', alternate: false });
+  assert.deepEqual(composerControl('running', true, true), { primary: 'send', label: '执行指令', alternate: false });
+  const commands = [{ name: 'model', kind: 'native' }, { name: 'login', kind: 'terminal' }, { name: 'skill:notes', kind: 'skill' }];
+  assert.deepEqual(inputSuggestions(inputToken('/mo', 3), [], commands).map(x => x.name), ['model']);
+  assert.equal(inputToken('/tmp/something', 14), null);
+  assert.equal(inputToken('mail@example.org', 16), null);
+  const draft = 'read @skills:no next';
+  const token = inputToken(draft, 15);
+  assert.deepEqual(inputSuggestions(token, [{ name: 'notes', description: 'Read notes' }], commands).map(x => x.name), ['notes']);
+  assert.deepEqual(insertInputToken(draft, token, '@skills:notes'), { text: 'read @skills:notes next', caret: 19 });
+});
+
 test('settings patches do not overwrite unchanged terminal settings or depend on tool order', () => {
   const original = { title: '当前', systemPrompt: '旧', thinking: 'low', model: { provider: 'p', id: 'm' }, activeTools: ['a', 'b'] };
   assert.deepEqual(settingsPatch(original, { ...original, title: ' 新名称 ', activeTools: ['b', 'a'] }), { title: '新名称' });

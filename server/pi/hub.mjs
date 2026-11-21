@@ -4,7 +4,7 @@ import { body, createLoopbackServer, json, newAccessToken, openEvents } from '..
 import { AppError } from '../settings.mjs';
 
 const routes = { settings: 'PATCH', prompt: 'POST', stop: 'POST', compact: 'POST', probe: 'POST', addons: 'POST', resources: 'POST', switch: 'POST',
-  qq: 'PATCH', qqprobe: 'POST', qqreset: 'POST' };
+  models: 'POST', qq: 'PATCH', qqprobe: 'POST', qqreset: 'POST' };
 
 export function createPiWebHub({ distDir }) {
   let binding, live, starting;

@@ -7,9 +7,9 @@ import {
   isNearBottom,
   nextRevealCount,
   preserveScrollAnchor,
+  roundContent,
   selectRoundWindow,
-  summarizeTools,
-  type TranscriptBlock,
+  type RoundActivity,
   type TranscriptRound,
 } from './transcript-model';
 import {
@@ -29,10 +29,13 @@ function formatToolState(state: MessageView['state']) {
   return '已完成';
 }
 
-function toolSummaryText(tools: readonly MessageView[]) {
-  const { total, running, errors } = summarizeTools(tools);
-  const parts = [`工具 ${total} 项`];
+function activitySummary(round: TranscriptRound, activity: readonly RoundActivity[]) {
+  const { total, running, errors } = round.toolSummary;
+  const thought = activity.some(item => item.kind === 'thinking');
+  const parts = [thought && total ? '思考与工具' : thought ? '思考过程' : '工具调用'];
+  if (total) parts.push(`${total} 项工具`);
   if (running) parts.push(`${running} 项执行中`);
+  else if (!round.complete && thought) parts.push('进行中');
   if (errors) parts.push(`${errors} 项失败`);
   return parts.join(' · ');
 }
@@ -61,37 +64,14 @@ function ToolResult({ message }: { message: MessageView }) {
   );
 }
 
-function ToolGroup({ block, summary }: { block: Extract<TranscriptBlock, { kind: 'tools' }>; summary: string }) {
+function ActivityGroup({ round, activity }: { round: TranscriptRound; activity: readonly RoundActivity[] }) {
   const [open, setOpen] = useState(false);
-  return (
-    <details
-      className={styles.toolGroup}
-      onToggle={(event: SyntheticEvent<HTMLDetailsElement>) => setOpen(event.currentTarget.open)}
-    >
-      <summary>
-        <span>{summary}</span>
-        <span className={styles.toolHint}>{open ? '收起' : '展开查看'}</span>
-      </summary>
-      {open && <div className={styles.toolList}>{block.tools.map((tool) => <ToolResult key={tool.id} message={tool} />)}</div>}
-    </details>
-  );
-}
-
-function AssistantBlock({ message }: { message: MessageView }) {
-  const hasThinking = Boolean(message.thinking?.trim());
-  return (
-    <article aria-label="助手回复" className={styles.assistant}>
-      {hasThinking && (
-        <details className={styles.thinking}>
-          <summary>{message.state === 'running' && !message.text ? '思考中' : '思考过程'}</summary>
-          <div className={styles.thinkingBody}><Markdown text={message.thinking ?? ''} /></div>
-        </details>
-      )}
-      {message.text ? <Markdown text={message.text} /> : !hasThinking && message.state === 'running' ? (
-        <div className={styles.working} role="status"><span className={styles.statusDot} />正在生成…</div>
-      ) : null}
-    </article>
-  );
+  return <details className={styles.toolGroup} data-round-activity onToggle={(event: SyntheticEvent<HTMLDetailsElement>) => setOpen(event.currentTarget.open)}>
+    <summary><span>{activitySummary(round, activity)}</span><span className={styles.toolHint}>{open ? '收起' : '展开查看'}</span></summary>
+    {open && <div className={styles.toolList}>{activity.map(({ kind, message }) => kind === 'tool'
+      ? <ToolResult key={`tool-${message.id}`} message={message} />
+      : <div key={`thinking-${message.id}`} className={styles.thinkingBody}><span className={styles.detailLabel}>思考</span><Markdown text={message.thinking ?? ''} /></div>)}</div>}
+  </details>;
 }
 
 function Round({
@@ -103,6 +83,8 @@ function Round({
   index: number;
   register: (node: HTMLElement | null) => void;
 }) {
+  const { activity, body } = roundContent(round);
+  const working = !activity.length && !body.length && round.blocks.some(block => block.kind === 'assistant' && block.message.state === 'running');
   return (
     <section
       ref={register}
@@ -113,11 +95,9 @@ function Round({
     >
       {round.user && <article className={styles.userRow} aria-label="用户消息"><div className={styles.userBubble}>{round.user.text}</div></article>}
       <div className={styles.roundBody}>
-        {round.blocks.map((block, blockIndex) => block.kind === 'tools' ? (
-          <ToolGroup key={`tools-${blockIndex}`} block={block} summary={toolSummaryText(block.tools)} />
-        ) : (
-          <AssistantBlock key={block.message.id} message={block.message} />
-        ))}
+        {activity.length > 0 && <ActivityGroup round={round} activity={activity} />}
+        {body.map(message => <article key={message.id} aria-label="助手回复" className={styles.assistant}><Markdown text={message.text} /></article>)}
+        {working && <div className={styles.working} role="status"><span className={styles.statusDot} />正在生成…</div>}
       </div>
     </section>
   );

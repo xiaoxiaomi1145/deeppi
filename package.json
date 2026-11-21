@@ -1,10 +1,27 @@
 {
   "name": "deeppi",
-  "version": "0.2.0",
+  "version": "2.0.145",
   "description": "A local Web companion for Pi's native coding-agent sessions",
-  "keywords": ["pi-package", "pi-extension", "coding-agent", "web"],
-  "files": ["extensions", "server", "dist", "docs", "web/UPSTREAM.md", "SECURITY.md", "THIRD_PARTY_NOTICES"],
-  "pi": { "extensions": ["./extensions/deeppi.ts"] },
+  "keywords": [
+    "pi-package",
+    "pi-extension",
+    "coding-agent",
+    "web"
+  ],
+  "files": [
+    "extensions",
+    "server",
+    "dist",
+    "docs",
+    "web/UPSTREAM.md",
+    "SECURITY.md",
+    "THIRD_PARTY_NOTICES"
+  ],
+  "pi": {
+    "extensions": [
+      "./extensions/deeppi.ts"
+    ]
+  },
   "type": "module",
   "license": "MIT",
   "engines": {
@@ -18,16 +35,25 @@
     "check": "tsc --noEmit",
     "prepack": "npm run build"
   },
-  "dependencies": { "@earendil-works/pi-schema": "1.6.0", "ws": "8.22.2" },
+  "dependencies": {
+    "@earendil-works/pi-schema": "1.6.0",
+    "ws": "8.22.2"
+  },
   "peerDependencies": {
     "@earendil-works/pi-agent-core": "*",
     "@earendil-works/pi-ai": "*",
     "@earendil-works/pi-coding-agent": "*"
   },
   "peerDependenciesMeta": {
-    "@earendil-works/pi-agent-core": { "optional": true },
-    "@earendil-works/pi-ai": { "optional": true },
-    "@earendil-works/pi-coding-agent": { "optional": true }
+    "@earendil-works/pi-agent-core": {
+      "optional": true
+    },
+    "@earendil-works/pi-ai": {
+      "optional": true
+    },
+    "@earendil-works/pi-coding-agent": {
+      "optional": true
+    }
   },
   "devDependencies": {
     "@earendil-works/pi-agent-core": "1.6.0",

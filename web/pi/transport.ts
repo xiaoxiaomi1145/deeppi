@@ -1,6 +1,6 @@
 import { acceptLaunchLink, ApiError } from '../api';
 import { readEvents } from '../sse';
-import type { AddonId, CompactPayload, PiCatalog, PiHistory, PiState, PromptPayload, ResourceAction, ResourceResult, SettingsPatch } from './model';
+import type { AddonId, CompactPayload, PiCatalog, PiHistory, PiState, PromptPayload, PromptResult, ResourceAction, ResourceResult, SettingsPatch, WebModelAction } from './model';
 import type { QqPatch, QqView } from './qq-model';
 
 const prefix = '/api/pi';
@@ -44,7 +44,8 @@ export const piApi = {
   catalog: (signal?: AbortSignal) => request<PiCatalog>('/catalog', 'GET', undefined, signal),
   history: (id: string, signal?: AbortSignal) => request<PiHistory>(`/history?${new URLSearchParams({ id })}`, 'GET', undefined, signal),
   switch: (id: string) => request<{ ok: true }>('/switch', 'POST', { id }),
-  prompt: (body: PromptPayload) => request<unknown>('/prompt', 'POST', body),
+  prompt: (body: PromptPayload) => request<PromptResult>('/prompt', 'POST', body),
+  models: (body: WebModelAction) => request<{ ok: true; notice?: string }>('/models', 'POST', body),
   stop: () => request<unknown>('/stop', 'POST', {}),
   compact: (body: CompactPayload) => request<unknown>('/compact', 'POST', body),
   probe: (signal?: AbortSignal) => request<{ model: string }>('/probe', 'POST', {}, signal),
@@ -55,7 +56,7 @@ export const piApi = {
   qqSettings: (body: QqPatch, signal?: AbortSignal) => request<QqView>('/qq', 'PATCH', body, signal),
   qqProbe: (signal?: AbortSignal) => request<{ botId: string; nickname?: string }>('/qqprobe', 'POST', {}, signal),
   qqReset: (id: string, signal?: AbortSignal) => request<QqView>('/qqreset', 'POST', { id }, signal),
-  async events(onEvent: (event: string, data: unknown) => void, signal: AbortSignal) {
+  async events(onEvent: (event: string, data: unknown) => void, signal: AbortSignal, onActivity?: () => void) {
     const response = await fetch(`${prefix}/events`, {
       signal, cache: 'no-store', credentials: 'same-origin', redirect: 'error',
       headers: { ...authorization(), Accept: 'text/event-stream' },
@@ -64,6 +65,6 @@ export const piApi = {
     if (!response.body || !response.headers.get('content-type')?.includes('text/event-stream')) {
       throw new Error('Pi 未返回实时事件流。');
     }
-    await readEvents(response.body, onEvent);
+    await readEvents(response.body, onEvent, onActivity);
   },
 };

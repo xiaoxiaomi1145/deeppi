@@ -1,5 +1,5 @@
 import { fileURLToPath } from 'node:url';
-import { CONFIG_DIR_NAME, SessionManager, getAgentDir, parseFrontmatter, type ExtensionAPI } from '@earendil-works/pi-coding-agent';
+import { CONFIG_DIR_NAME, SessionManager, getAgentDir, parseFrontmatter, stripFrontmatter, type ExtensionAPI } from '@earendil-works/pi-coding-agent';
 import { cleanupSessionResources } from '@earendil-works/pi-ai';
 import { clampThinkingLevel, getSupportedThinkingLevels } from '@earendil-works/pi-ai/models';
 import { createPiAddons } from '../server/pi/addons.mjs';
@@ -9,6 +9,7 @@ import { createPiHost } from '../server/pi/host.mjs';
 import { getPiWebHub } from '../server/pi/hub.mjs';
 import { createPiResources } from '../server/pi/resources.mjs';
 import { projectBranch } from '../server/pi/transcript.mjs';
+import { createWebModels } from '../server/pi/web-models.mjs';
 import { getQqService } from '../server/qq/service.mjs';
 
 export default function deeppi(pi: ExtensionAPI) {
@@ -20,7 +21,9 @@ export default function deeppi(pi: ExtensionAPI) {
   const catalog = createPiCatalog({ SessionManager, projectBranch });
   const allowEnvironmentModel = registerPiEnvironment(pi);
   const qq = getQqService({ agentDir, cleanupSession: cleanupSessionResources });
-  const host = createPiHost({ pi, addons, resources, catalog, hub, thinkingLevels: getSupportedThinkingLevels, clampThinking: clampThinkingLevel, allowEnvironmentModel, qq });
+  const webModels = createWebModels({ pi, agentDir });
+  const host = createPiHost({ pi, addons, resources, catalog, hub, thinkingLevels: getSupportedThinkingLevels,
+    clampThinking: clampThinkingLevel, allowEnvironmentModel, qq, webModels, stripFrontmatter });
 
   pi.registerCommand('deeppi', {
     description: 'Open the Deeppi web view of this Pi session; /deeppi close stops the listener',

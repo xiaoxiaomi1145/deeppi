@@ -16,6 +16,20 @@ export function thinkingFor(levels: readonly string[], requested: string): strin
   return levels.includes('off') ? 'off' : levels[0] ?? 'off';
 }
 export interface PiSkill { name: string; description: string }
+export type CommandKind = 'native' | 'prompt' | 'skill' | 'terminal';
+export interface PiCommand { name: string; description?: string; argumentHint?: string; kind: CommandKind }
+export type PiPanel = 'model' | 'conversation' | 'context' | 'tools' | 'resources' | 'help' | 'sessions';
+export interface PromptResult { ok: true; panel?: PiPanel; copy?: string; notice?: string; sessionChanged?: true }
+export interface ContextPolicy { threshold: number | null; focus: string }
+export interface NativeCompaction { enabled: boolean; reserveTokens: number; keepRecentTokens: number }
+export type ModelProtocol = 'openai-completions' | 'openai-responses' | 'anthropic-messages' | 'google-generative-ai' | 'mistral-conversations';
+export interface WebModelConfig {
+  slug: string; protocol: ModelProtocol; modelId: string; name: string; baseUrl: string;
+  contextWindow: number; maxOutputTokens: number; reasoning: boolean;
+}
+export interface WebModel extends WebModelConfig, ModelRef { hasKey: boolean }
+export type WebModelAction = { action: 'remove'; slug: string }
+  | (WebModelConfig & { action: 'save'; editing: boolean; apiKey?: string; use: boolean });
 export interface PiTool { name: string; description: string; active: boolean; exposure?: unknown }
 export interface PiMcp { name: string; transport: 'http' | 'stdio'; enabled: boolean; exposure?: unknown; source: 'pi' | 'session'; tools: number }
 export type AddonId = 'compact' | 'bash';
@@ -27,6 +41,8 @@ export interface PiState {
   connected: boolean;
   model: PiModel | null;
   models: PiModelOption[];
+  webModels?: { models: WebModel[]; error?: string };
+  commands?: PiCommand[];
   thinking: string;
   levels: string[];
   systemPrompt: string;
@@ -35,7 +51,7 @@ export interface PiState {
   mcp: PiMcp[];
   canImport: boolean;
   messages: MessageView[];
-  context: { tokens: number | null; window: number | null };
+  context: { tokens: number | null; window: number | null; policy?: ContextPolicy; native?: NativeCompaction; thresholdTokens?: number | null };
   error?: string;
   addons?: Record<AddonId, boolean>;
 }
@@ -48,8 +64,8 @@ export interface PiHistory { id: string; title: string; cwd: string; updatedAt: 
 export type Delivery = 'steer' | 'followUp';
 export interface PromptPayload { text: string; mode?: Delivery; skill?: string }
 export interface CompactPayload { focus?: string; enhanced?: true }
-export interface SettingsPatch { title?: string; model?: ModelRef; thinking?: string; systemPrompt?: string; activeTools?: string[] }
-export type SettingsDraft = Required<Omit<SettingsPatch, 'model'>> & { model: ModelRef | null };
+export interface SettingsPatch { title?: string; model?: ModelRef; thinking?: string; systemPrompt?: string; activeTools?: string[]; context?: Partial<ContextPolicy> }
+export type SettingsDraft = Required<Omit<SettingsPatch, 'model' | 'context'>> & { model: ModelRef | null };
 export type ResourceAction =
   | { action: 'register-mcp'; name: string; transport: 'http' | 'stdio'; url?: string; command?: string; args?: string[]; tokenEnv?: string; exposure?: string; confirmed: true }
   | { action: 'remove-mcp'; name: string }

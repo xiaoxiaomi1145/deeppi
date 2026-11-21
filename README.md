@@ -71,3 +71,5 @@ npm pack --dry-run
 `npm test` 不需要模型密钥。`npm pack` 会预构建两个 Web 入口，只打包发布所需文件；此仓库未在这里发布到 npm。执行真实模型请求时，Pi 或 QQ 会把各自需要的对话上下文发给所选模型服务商。访问链接只供自己使用，Web 和 OneBot 接收端只监听本机，不要暴露到公网。详见[安全与隐私](<SECURITY.md>)。
 
 Deeppi 采用 [MIT 许可证](<LICENSE>)。DeepSeek 界面复用见[来源清单](<web/UPSTREAM.md>)；Pi、WebSocket 依赖和其他上游声明见[第三方声明](<THIRD_PARTY_NOTICES>)。项目不是 DeepSeek、Pi、腾讯 QQ 或 OneBot 的官方发行版。
+
+本项目只推荐用于在 Pi Agent 进行 AI 编码时使用。不推荐用于领养赛博老公、老婆、宠物等方案。如果准备使用此项目进行以上方案，推荐更换项目。

@@ -11,6 +11,8 @@ test('bearer SSE parsing preserves UTF-8, event boundaries, and heartbeat handli
     },
   });
   const events = [];
-  await readEvents(body, (event, data) => events.push([event, data]));
+  let activity = 0;
+  await readEvents(body, (event, data) => events.push([event, data]), () => activity += 1);
+  assert.equal(activity, bytes.length, 'even heartbeat-only chunks prove that the transport is alive');
   assert.deepEqual(events, [['state', { title: '你好' }], ['delta', { text: '世界' }], ['deleted', {}]]);
 });

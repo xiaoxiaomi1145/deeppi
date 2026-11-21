@@ -195,6 +195,13 @@
   background: var(--dsw-specific-input-major);
 }
 .composer:focus-within { border-color: var(--pi-accent); }
+.composer { position: relative; }
+.suggestions { position: absolute; z-index: 3; inset-inline: 0; bottom: calc(100% + 7px); display: grid; gap: 2px; list-style: none; margin: 0; padding: 5px; max-height: min(250px, 36vh); overflow: auto; border: 1px solid var(--pi-border); border-radius: 12px; background: var(--dsw-alias-bg-base); box-shadow: 0 -3px 22px #0002; }
+.suggestions li { display: grid; gap: 3px; min-width: 0; padding: 8px 10px; border-radius: 7px; cursor: pointer; font-size: 13px; overflow-wrap: anywhere; }
+.suggestions li[aria-selected='true'], .suggestions li:hover { background: var(--dsw-alias-bg-layer-2); }
+.suggestions li > span:last-child:not(:first-child) { color: var(--dsw-alias-label-secondary); }
+.suggestions strong { font-weight: 600; }
+.suggestions small { margin-inline-start: 7px; color: var(--dsw-alias-label-secondary); }
 .editor { display: grid; overflow: hidden; min-width: 0; min-height: 52px; max-height: min(200px, 24vh); }
 .editorMirror, .editorInput { grid-area: 1 / 1; display: block; min-width: 0; min-height: 0; width: 100%; padding: 4px 6px; border: 0; font: inherit; font-size: 16px; line-height: 1.45; white-space: pre-wrap; overflow-wrap: anywhere; }
 .editorMirror { visibility: hidden; overflow: hidden; pointer-events: none; }
@@ -205,8 +212,13 @@
 .composerBar { justify-content: space-between; flex-wrap: wrap; min-width: 0; }
 .composerOptions { min-width: 0; flex-wrap: wrap; }
 .composerButtons { flex: none; margin-inline-start: auto; }
-.composerOption { display: inline-flex; min-width: 0; max-width: 100%; align-items: center; gap: 5px; color: var(--dsw-alias-label-secondary); font-size: 12px; }
-.composerOption select { min-height: 35px; min-width: 0; max-width: 110px; border: 1px solid var(--pi-border); border-radius: 7px; padding: 2px 5px; background: var(--dsw-alias-bg-base); color: var(--dsw-alias-label-primary); font: inherit; }
+.composerChip { min-height: 34px; border: 0; border-radius: 7px; padding: 4px 7px; background: transparent; color: var(--dsw-alias-label-secondary); font: inherit; font-size: 12px; cursor: pointer; }
+.composerChip:hover:not(:disabled) { background: var(--dsw-alias-interactive-bg-hover); color: var(--dsw-alias-label-primary); }
+.composerChip:disabled { opacity: .45; cursor: default; }
+.helpCommands { margin: 10px 0 0; padding: 0; list-style: none; }
+.helpCommands li { padding: 8px 0; border-block-start: 1px solid var(--pi-border); overflow-wrap: anywhere; }
+.helpCommands :is(small, span) { color: var(--dsw-alias-label-secondary); font-size: 12px; }
+.helpCommands small { margin-inline-start: 8px; }
 .composerHint { margin: 3px 0 0; padding-inline: 6px; color: var(--dsw-alias-label-secondary); font-size: 11px; line-height: 16px; }
 .composerButtons .send { background: var(--pi-accent); color: var(--pi-on-accent); }
 .composerButtons .send:hover:not(:disabled), .primary:hover:not(:disabled) { background: var(--pi-accent-hover); }
@@ -242,7 +254,13 @@
 .field > :is(input, select, textarea) { width: 100%; min-width: 0; min-height: 40px; padding: 7px 9px; border: 1px solid var(--pi-border); border-radius: 8px; background: var(--dsw-specific-input-major); color: var(--dsw-alias-label-primary); font: inherit; font-size: 14px; }
 .field > textarea { resize: vertical; }
 .field :is(input, textarea)::placeholder { color: var(--dsw-alias-label-secondary); }
-.fieldPair { display: grid; min-width: 0; gap: 8px; grid-template-columns: repeat(2, minmax(0, 1fr)); }
+.fieldPair, .settingsPair { display: grid; min-width: 0; gap: 8px; grid-template-columns: repeat(2, minmax(0, 1fr)); }
+.modelFields { display: grid; min-width: 0; gap: 8px; margin: 0; padding: 10px; border: 1px solid var(--pi-border); border-radius: 9px; }
+.modelFields legend { padding: 0 4px; }
+.modelFields .inlineActions { justify-content: flex-end; }
+.modelEntry { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 7px; min-width: 0; padding-block: 7px; border-block-end: 1px solid var(--pi-border); }
+.modelEntry :is(strong, small) { display: block; overflow-wrap: anywhere; }
+.modelEntry small { color: var(--dsw-alias-label-secondary); }
 .readOnly > code { padding: 8px 9px; border-radius: 8px; background: var(--pi-surface); overflow-wrap: anywhere; }
 .checkRow { display: flex; min-height: 38px; align-items: flex-start; gap: 9px; padding: 7px 0; line-height: 1.5; }
 .checkRow input { width: 17px; height: 17px; flex: none; margin: 2px 0 0; accent-color: var(--pi-accent); }
@@ -289,7 +307,7 @@
   .modelButton { display: none; }
   .status { padding-inline: 2px; }
   .composer { width: calc(100% - 20px); max-width: 648px; margin-block-end: max(7px, env(safe-area-inset-bottom)); }
-  .composerOption select { min-height: 42px; font-size: 16px; max-width: min(28vw, 135px); }
+  .composerChip { min-height: 42px; }
   .catalogSearch input, .field > :is(input, select, textarea) { font-size: 16px; }
   .settingsNav button, .primary, .secondary { min-height: 40px; }
 }
