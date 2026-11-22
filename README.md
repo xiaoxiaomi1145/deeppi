@@ -4,6 +4,8 @@
 
 这个项目可能不会维护得太频繁。大部分功能都是按我自己的需求做的，也许没那么实用，不一定适合每个人。
 
+这个项目以后的大部分维护都会交给deepseek和gpt大人(AI太好用了你们知道吗)
+
 Deeppi 是 [Pi](https://github.com/earendil-works/pi) 的本机 Web 前端，界面基于 [DeepSeek chat-demo](https://github.com/deepseek-ai/chat-demo)。可以独立管理 Pi 工作区和会话，也可以附到当前 Pi 终端。插件的可选增强压缩、Bash 工具库以及 QQ 桥接默认关闭。
 
 ## 独立 Pi Web（不用先开 TUI）
