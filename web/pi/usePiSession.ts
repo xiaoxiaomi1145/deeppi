@@ -24,7 +24,14 @@ function isDelta(value: unknown): value is Delta {
 }
 
 export function usePiSession() {
-  const [state, setState] = useState<PiState | null>(null);
+  return usePiStream(piApi.events, isState);
+}
+
+export function usePiStream<T extends Pick<PiState, 'status' | 'messages'>>(
+  events: typeof piApi.events,
+  accepts: (value: unknown) => value is T,
+) {
+  const [state, setState] = useState<T | null>(null);
   const [link, setLink] = useState<LinkStatus>('connecting');
   const [linkError, setLinkError] = useState('');
   const [attempt, reconnect] = useReducer((n: number) => n + 1, 0);
@@ -92,9 +99,9 @@ export function usePiSession() {
       const current: Connection = { controller: new AbortController(), startedAt: now, lastActivity: now, ready: false };
       stream = current;
       try {
-        await piApi.events((event, data) => {
+        await events((event, data) => {
           if (stream !== current) return;
-          if (event === 'state' && isState(data)) {
+          if (event === 'state' && accepts(data)) {
             // A complete snapshot supersedes deltas queued before it.
             dropPending();
             current.ready = true;
@@ -160,7 +167,7 @@ export function usePiSession() {
       window.removeEventListener('pageshow', visible);
       window.removeEventListener('online', online);
     };
-  }, [attempt]);
+  }, [attempt, accepts, events]);
 
   return { state, link, linkError, reconnect };
 }

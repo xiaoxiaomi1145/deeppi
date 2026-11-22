@@ -92,10 +92,12 @@ function history(record) {
 }
 const memory = record => record.summary ? [msg('user', `较早的对话摘要，仅供参考：\n${record.summary}`, 0)] : [];
 
-export function createQqEngine({ dataDir, stickerStore, cleanupSession = () => {} }) {
+export function createQqEngine({ dataDir, stickerStore, cleanupSession = () => {}, writeState = writePrivateJson }) {
   const { records, usage } = load(dataDir);
   const active = new Map(), jobs = [], pending = new Set(), cooldown = new Map(), lanes = new Map();
   let lastError;
+  let snapshotCache;
+  function invalidateSnapshot() { snapshotCache = undefined; }
 
   function clearLanes(scope) {
     for (const [lane, owner] of lanes) if (!scope || owner === scope) {
@@ -106,17 +108,26 @@ export function createQqEngine({ dataDir, stickerStore, cleanupSession = () => {
   function persist() {
     let total = 512;
     const retained = [];
+    const commits = [];
     for (const record of [...records.values()].sort((a, b) => b.updatedAt - a.updatedAt)) {
-      let size = Buffer.byteLength(JSON.stringify(record)) + 1;
-      for (; size + total > storeLimit - 4096 && record.rounds.length; size = Buffer.byteLength(JSON.stringify(record)) + 1) record.rounds.shift();
-      if (size + total > storeLimit - 4096 && record.summary) {
-        record.summary = '';
-        size = Buffer.byteLength(JSON.stringify(record)) + 1;
+      // Trim a detached candidate. If the atomic write fails, the in-memory
+      // conversation must remain complete so a retry cannot lose history.
+      const candidate = { ...record, rounds: [...record.rounds], seen: [...record.seen] };
+      let size = Buffer.byteLength(JSON.stringify(candidate)) + 1;
+      for (; size + total > storeLimit - 4096 && candidate.rounds.length; size = Buffer.byteLength(JSON.stringify(candidate)) + 1) candidate.rounds.shift();
+      if (size + total > storeLimit - 4096 && candidate.summary) {
+        candidate.summary = '';
+        size = Buffer.byteLength(JSON.stringify(candidate)) + 1;
       }
-      retained.push(record);
+      retained.push(candidate);
+      commits.push([record, candidate]);
       total += size;
     }
-    writePrivateJson(dataDir, storeName, { version: 1, usage, records: retained });
+    writeState(dataDir, storeName, { version: 1, usage, records: retained });
+    for (const [record, candidate] of commits) {
+      if (candidate.rounds.length !== record.rounds.length) record.rounds = candidate.rounds;
+      if (candidate.summary !== record.summary) record.summary = candidate.summary;
+    }
   }
 
   function recordFor(inbound, now) {
@@ -131,6 +142,7 @@ export function createQqEngine({ dataDir, stickerStore, cleanupSession = () => {
     }
     record = { id: randomUUID(), scope: inbound.scope, label: inbound.label, updatedAt: now, rounds: [], seen: [], summary: '', compactions: 0 };
     records.set(inbound.scope, record);
+    invalidateSnapshot();
     return record;
   }
 
@@ -162,7 +174,10 @@ export function createQqEngine({ dataDir, stickerStore, cleanupSession = () => {
     return {
       [Symbol.asyncIterator]: () => stream[Symbol.asyncIterator](),
       result: () => finished ??= Promise.resolve(stream.result()).then(answer => {
-        if (answer.usage && (answer.usage.totalTokens || evidence)) addUsage(usage, answer.usage, evidence, source);
+        if (answer.usage && (answer.usage.totalTokens || evidence)) {
+          addUsage(usage, answer.usage, evidence, source);
+          invalidateSnapshot();
+        }
         return answer;
       }),
     };
@@ -208,6 +223,7 @@ export function createQqEngine({ dataDir, stickerStore, cleanupSession = () => {
     record.seen.push(inbound.id);
     if (record.seen.length > maxSeen) record.seen.shift();
     record.updatedAt = now;
+    invalidateSnapshot();
     persist();
 
     const deliver = message => {
@@ -247,7 +263,15 @@ export function createQqEngine({ dataDir, stickerStore, cleanupSession = () => {
       }
       let remembered = memory(record);
       if (sizePlain([...remembered, latest]) > inputLimit) remembered = [];
-      while (kept.length && sizePlain([...remembered, ...kept, latest]) > inputLimit) kept = kept.slice(2);
+      const fixedTokens = sizePlain([...remembered, latest]);
+      let keptTokens = estimateTokens(kept);
+      let keepStart = 0;
+      while (keepStart < kept.length && fixedTokens + keptTokens > inputLimit) {
+        const nextStart = Math.min(kept.length, keepStart + 2);
+        keptTokens -= estimateTokens(kept.slice(keepStart, nextStart));
+        keepStart = nextStart;
+      }
+      if (keepStart) kept = kept.slice(keepStart);
       const lane = laneFor(record, route, tools, prompt, settings.cacheRetention);
       let calls = 0, turns = 0;
       const agent = new Agent({
@@ -273,11 +297,14 @@ export function createQqEngine({ dataDir, stickerStore, cleanupSession = () => {
       if (reply || sent.stickers.length) {
         record.rounds.push({ user: value, at: now, answer: reply || `已发送表情：${sent.stickers.map(id => `#${id}`).join('、')}`, answerAt: Date.now() });
         if (record.rounds.length > maxRounds) record.rounds.shift();
+        invalidateSnapshot();
       }
       lastError = undefined;
+      invalidateSnapshot();
     } catch (error) {
       if (signal.aborted) return;
       lastError = error instanceof AppError && error.status === 400 ? error.message : 'QQ 生成或发送失败。请检查 Pi 模型和 OneBot 连接。';
+      invalidateSnapshot();
       if (!sent.stickers.length) {
         try { await deliver([{ type: 'text', data: { text: lastError } }]); } catch { /* Transport may no longer be connected. */ }
       }
@@ -290,12 +317,14 @@ export function createQqEngine({ dataDir, stickerStore, cleanupSession = () => {
       if (index < 0) break;
       const [job] = jobs.splice(index, 1);
       active.set(job.inbound.scope, job);
+      invalidateSnapshot();
       Promise.resolve().then(() => turn(job)).then(job.resolve, error => {
         if (job.signal.aborted) job.resolve();
-        else { lastError = 'QQ 会话无法处理，请检查本地存储和 Pi 设置。'; job.reject(error); }
+        else { lastError = 'QQ 会话无法处理，请检查本地存储和 Pi 设置。'; invalidateSnapshot(); job.reject(error); }
       }).finally(() => {
         active.delete(job.inbound.scope);
         pending.delete(job.key);
+        invalidateSnapshot();
         drain();
       });
     }
@@ -314,15 +343,18 @@ export function createQqEngine({ dataDir, stickerStore, cleanupSession = () => {
     return new Promise((resolve, reject) => {
       pending.add(key);
       jobs.push({ key, inbound, send, settings, resolveRoute, signal, resolve, reject });
+      invalidateSnapshot();
       drain();
     });
   }
 
   function snapshot() {
-    return { usage: { ...usage }, conversations: [...records.values()].sort((a, b) => b.updatedAt - a.updatedAt).map(record => ({
+    if (snapshotCache) return snapshotCache;
+    snapshotCache = { usage: { ...usage }, conversations: [...records.values()].sort((a, b) => b.updatedAt - a.updatedAt).map(record => ({
       id: record.id, label: record.label, updatedAt: record.updatedAt, compactions: record.compactions,
       messages: record.rounds.length * 2, busy: active.has(record.scope) || jobs.some(job => job.inbound.scope === record.scope),
     })), pending: active.size + jobs.length, ...(lastError ? { lastError } : {}) };
+    return snapshotCache;
   }
 
   function reset(id) {
@@ -330,7 +362,8 @@ export function createQqEngine({ dataDir, stickerStore, cleanupSession = () => {
     if (!record) throw new AppError(404, 'QQ 对话不存在。');
     if (active.has(record.scope) || jobs.some(job => job.inbound.scope === record.scope)) throw new AppError(409, '此 QQ 对话正在生成。');
     records.delete(record.scope);
-    try { persist(); } catch (error) { records.set(record.scope, record); throw error; }
+    invalidateSnapshot();
+    try { persist(); } catch (error) { records.set(record.scope, record); invalidateSnapshot(); throw error; }
     clearLanes(record.scope);
   }
 

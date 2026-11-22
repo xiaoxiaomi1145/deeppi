@@ -23,6 +23,11 @@ export function createPiHost({ pi, addons, resources, catalog, hub, thinkingLeve
   let systemPrompt = '', lastError;
   let policy = defaultContextPolicy;
   let memoLeaf, memoManager, memoBranch = [];
+  let snapshotCache;
+
+  function invalidateSnapshot() {
+    snapshotCache = undefined;
+  }
   const pendingTools = new Map();
 
   const id = () => ctx?.sessionManager.getSessionId();
@@ -88,12 +93,13 @@ export function createPiHost({ pi, addons, resources, catalog, hub, thinkingLeve
   }
 
   function snapshot() {
+    if (snapshotCache) return snapshotCache;
     const timeline = messages();
     const active = new Set(pi.getActiveTools());
     const tools = pi.getAllTools().map(tool => ({ name: tool.name, description: tool.description ?? '',
       active: active.has(tool.name), exposure: typeof tool.exposure === 'string' ? tool.exposure : undefined }));
     const model = currentModel();
-    return {
+    snapshotCache = {
       id: id(), title: pi.getSessionName() || timeline.find(message => message.role === 'user')?.text.trim().replace(/\s+/gu, ' ').slice(0, 70) || '当前 Pi 会话',
       cwd: ctx.cwd, status: realStatus(), connected: true,
       model: model ? copyModel(model) : null,
@@ -105,9 +111,11 @@ export function createPiHost({ pi, addons, resources, catalog, hub, thinkingLeve
       context: contextSnapshot(model),
       addons: addons.snapshot(), error: lastError,
     };
+    return snapshotCache;
   }
 
   function publish() {
+    invalidateSnapshot();
     if (scheduled || !hub.isBound(host)) return;
     // Pi callbacks can run before the leaf and tool results have been committed.
     scheduled = setImmediate(() => {
@@ -124,12 +132,17 @@ export function createPiHost({ pi, addons, resources, catalog, hub, thinkingLeve
   }
   function attach(current) {
     ctx = current;
+    invalidateSnapshot();
+    resources.invalidate?.();
     savedSettings();
     hub.bind(host);
     return qq?.attach(resolveQqRoute);
   }
   function bindCommands(commandContext) {
-    if (commandContext.sessionManager.getSessionId() === id()) commands = commandContext;
+    if (commandContext.sessionManager.getSessionId() === id()) {
+      commands = commandContext;
+      invalidateSnapshot();
+    }
   }
 
   const panelResult = panel => ({ ...ok, panel });
@@ -163,7 +176,7 @@ export function createPiHost({ pi, addons, resources, catalog, hub, thinkingLeve
       if (name === 'new' || name === 'reload') {
         if (args) throw new AppError(400, `/${name} 不需要参数。`);
         const native = commandContext();
-        if (name === 'reload') { await native.reload(); return { ...ok, notice: 'Pi 已重载资源。' }; }
+        if (name === 'reload') { await native.reload(); resources.invalidate?.(); invalidateSnapshot(); return { ...ok, notice: 'Pi 已重载资源。' }; }
         const result = await native.newSession({ withSession: async replacement => hub.bindCommands(replacement) });
         if (result.cancelled) throw new AppError(409, 'Pi 取消了新建会话。');
         return { ...ok, sessionChanged: true };
@@ -373,7 +386,7 @@ export function createPiHost({ pi, addons, resources, catalog, hub, thinkingLeve
     hub.detach(host, event.reason);
     return qq?.detach(resolveQqRoute, event.reason);
   });
-  pi.on('session_tree', () => { savedSettings(); publish(); });
+  pi.on('session_tree', () => { resources.invalidate?.(); savedSettings(); publish(); });
   pi.on('before_agent_start', event => {
     clearTimeout(startTimer);
     if (systemPrompt) {
@@ -389,6 +402,7 @@ export function createPiHost({ pi, addons, resources, catalog, hub, thinkingLeve
   pi.on('message_update', ({ message, assistantMessageEvent: chunk }) => {
     if (message.role !== 'assistant' || !draft) return;
     draft = assistantView(message, draft.id, true);
+    invalidateSnapshot();
     if (chunk.type === 'text_delta' || chunk.type === 'thinking_delta') {
       hub.publish(host, 'delta', { messageId: draft.id, [chunk.type === 'text_delta' ? 'text' : 'thinking']: chunk.delta });
     }
@@ -414,6 +428,7 @@ export function createPiHost({ pi, addons, resources, catalog, hub, thinkingLeve
   });
   pi.on('agent_settled', autoCompact);
   pi.events.on('deeppi:addons-changed', publish);
-  for (const event of ['session_info_changed', 'session_compact', 'session_compact_failed', 'model_select', 'thinking_level_select', 'mcp_servers_change']) pi.on(event, publish);
+  for (const event of ['session_info_changed', 'session_compact', 'session_compact_failed', 'model_select', 'thinking_level_select']) pi.on(event, publish);
+  pi.on('mcp_servers_change', () => { resources.invalidate?.(); publish(); });
   return host;
 }

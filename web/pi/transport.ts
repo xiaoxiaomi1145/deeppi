@@ -28,8 +28,8 @@ function failed(response: Response, data: unknown): ApiError {
   return new ApiError(message || `请求失败（${response.status}）`, response.status);
 }
 
-async function request<T>(path: string, method = 'GET', body?: object, signal?: AbortSignal): Promise<T> {
-  const response = await fetch(`${prefix}${path}`, {
+export async function nativeRequest<T>(url: string, method = 'GET', body?: object, signal?: AbortSignal): Promise<T> {
+  const response = await fetch(url, {
     method, signal, cache: 'no-store', credentials: 'same-origin', redirect: 'error',
     headers: { ...authorization(), ...(body !== undefined && { 'Content-Type': 'application/json' }) },
     body: body === undefined ? undefined : JSON.stringify(body),
@@ -37,6 +37,21 @@ async function request<T>(path: string, method = 'GET', body?: object, signal?: 
   const data = await response.json().catch(() => undefined);
   if (!response.ok || (data === undefined && response.status !== 204)) throw failed(response, data);
   return data as T;
+}
+
+const request = <T>(path: string, method?: string, body?: object, signal?: AbortSignal) =>
+  nativeRequest<T>(`${prefix}${path}`, method, body, signal);
+
+export async function nativeEvents(url: string, onEvent: (event: string, data: unknown) => void, signal: AbortSignal, onActivity?: () => void) {
+  const response = await fetch(url, {
+    signal, cache: 'no-store', credentials: 'same-origin', redirect: 'error',
+    headers: { ...authorization(), Accept: 'text/event-stream' },
+  });
+  if (!response.ok) throw failed(response, await response.json().catch(() => undefined));
+  if (!response.body || !response.headers.get('content-type')?.includes('text/event-stream')) {
+    throw new Error('Pi 未返回实时事件流。');
+  }
+  await readEvents(response.body, onEvent, onActivity);
 }
 
 export const piApi = {
@@ -56,15 +71,6 @@ export const piApi = {
   qqSettings: (body: QqPatch, signal?: AbortSignal) => request<QqView>('/qq', 'PATCH', body, signal),
   qqProbe: (signal?: AbortSignal) => request<{ botId: string; nickname?: string }>('/qqprobe', 'POST', {}, signal),
   qqReset: (id: string, signal?: AbortSignal) => request<QqView>('/qqreset', 'POST', { id }, signal),
-  async events(onEvent: (event: string, data: unknown) => void, signal: AbortSignal, onActivity?: () => void) {
-    const response = await fetch(`${prefix}/events`, {
-      signal, cache: 'no-store', credentials: 'same-origin', redirect: 'error',
-      headers: { ...authorization(), Accept: 'text/event-stream' },
-    });
-    if (!response.ok) throw failed(response, await response.json().catch(() => undefined));
-    if (!response.body || !response.headers.get('content-type')?.includes('text/event-stream')) {
-      throw new Error('Pi 未返回实时事件流。');
-    }
-    await readEvents(response.body, onEvent, onActivity);
-  },
+  events: (onEvent: (event: string, data: unknown) => void, signal: AbortSignal, onActivity?: () => void) =>
+    nativeEvents(`${prefix}/events`, onEvent, signal, onActivity),
 };

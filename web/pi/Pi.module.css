@@ -152,6 +152,14 @@
 .sessionPick strong { font-size: 13px; font-weight: 600; }
 .sidebarFoot { flex: none; margin: 10px 0 0; padding: 9px 4px 1px; border-block-start: 1px solid var(--pi-border); color: var(--dsw-alias-label-secondary); font-size: 11px; line-height: 1.6; }
 
+.webShelf { margin-block: 9px 4px; }
+.webShelf h2 { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.webShelf :is(button, .inlineActions) { flex: none; }
+.webWorkspace { display: flex; align-items: center; gap: 2px; }
+.webWorkspace > button:first-child { flex: 1; }
+.webWorkspace > button[aria-current='true'] { background: var(--pi-active-bg); }
+.webSessions { margin-inline-start: 0; padding: 0; border: 0; }
+
 /* A single row of live controls; no separate document scrolling. */
 .main { display: flex; min-width: 0; min-height: 0; flex: 1; flex-direction: column; }
 .header {

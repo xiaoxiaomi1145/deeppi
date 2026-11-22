@@ -6,9 +6,11 @@ import { Transcript } from '../Transcript';
 import { useTheme } from '../theme';
 import { IconButton } from '../upstream/IconButton';
 import { IconCloseOutline16, IconDataOutline16, IconMenuOutline20, IconPanelLeftOutline16, IconSettingsOutline16 } from '../upstream/icons';
+import { PiWebApp } from '../pi-web/App';
 import { Catalog, FolderMark, sessionDate } from './Catalog';
 import { ContextPanel } from './ContextPanel';
 import { isSlashInput } from './input-model';
+import { Empty, useMobileViewport } from './layout';
 import { PiComposer } from './PiComposer';
 import { PiSettings, type SettingsSection } from './PiSettings';
 import { promptPayload, statusLabels, visibleHistory, workspaceLabel, type Delivery, type PiCatalog, type PiCommand, type PiHistory, type PiSessionSummary } from './model';
@@ -20,39 +22,6 @@ import '../upstream/markdown.css';
 import styles from './Pi.module.css';
 
 const localLinkLabels: Record<LinkStatus, string> = { connecting: '连接中', open: 'Pi 已连接', retrying: '重连中', closed: '已断开', needsLink: '等待连接' };
-const mobileQuery = '(max-width: 767px)';
-
-function useMobileViewport() {
-  const [mobile, setMobile] = useState(() => matchMedia(mobileQuery).matches);
-  useEffect(() => {
-    const query = matchMedia(mobileQuery);
-    const viewport = window.visualViewport;
-    const root = document.documentElement;
-    function update() {
-      setMobile(query.matches);
-      if (query.matches && viewport?.scale === 1) {
-        root.style.setProperty('--app-viewport-height', `${viewport.height}px`);
-        root.style.setProperty('--app-viewport-top', `${viewport.offsetTop}px`);
-      } else {
-        root.style.removeProperty('--app-viewport-height');
-        root.style.removeProperty('--app-viewport-top');
-      }
-    }
-    query.addEventListener('change', update);
-    viewport?.addEventListener('resize', update);
-    viewport?.addEventListener('scroll', update);
-    update();
-    return () => {
-      query.removeEventListener('change', update);
-      viewport?.removeEventListener('resize', update);
-      viewport?.removeEventListener('scroll', update);
-      root.style.removeProperty('--app-viewport-height');
-      root.style.removeProperty('--app-viewport-top');
-    };
-  }, []);
-  return mobile;
-}
-
 function CommandsPanel({ commands, onClose }: { commands: readonly PiCommand[]; onClose: () => void }) {
   return <Overlay title="Pi 指令" side="right" onClose={onClose}><Panel title="Pi 指令" onClose={onClose}>
     <p className={styles.note}>在输入框键入 <code>/</code> 可补全。仅终端的指令不会作为聊天消息发送。</p>
@@ -61,10 +30,6 @@ function CommandsPanel({ commands, onClose }: { commands: readonly PiCommand[]; 
       <span>{command.description}</span>
     </li>)}</ul>
   </Panel></Overlay>;
-}
-
-function Empty({ title, children }: { title: string; children: React.ReactNode }) {
-  return <section className={styles.empty}><span className={styles.emptyMark} aria-hidden="true">π</span><h2>{title}</h2>{children}</section>;
 }
 
 type Modal = { kind: 'sidebar' | 'context' | 'help' } | { kind: 'settings'; section: SettingsSection };
@@ -294,4 +259,4 @@ function App() {
 
 const root = document.getElementById('root');
 if (!root) throw new Error('Pi 网页缺少挂载节点。');
-createRoot(root).render(<App />);
+createRoot(root).render(root.hasAttribute('data-pi-web') ? <PiWebApp /> : <App />);

@@ -78,7 +78,7 @@ interface GpuDeviceLike {
   createBuffer(descriptor: { size: number; usage: number }): GpuBufferLike;
   createCommandEncoder(): GpuEncoderLike;
   queue: {
-    writeBuffer(buffer: GpuBufferLike, offset: number, data: ArrayBuffer): void;
+    writeBuffer(buffer: GpuBufferLike, offset: number, data: ArrayBufferLike): void;
     submit(commands: readonly unknown[]): void;
   };
   lost?: Promise<{ reason?: string; message?: string }>;
@@ -169,17 +169,16 @@ function makeVertices(points: readonly HistoryPoint[]) {
   return new Float32Array(vertices);
 }
 
-function samePoints(left: readonly HistoryPoint[], right: readonly HistoryPoint[]) {
-  return pointsKey(left) === pointsKey(right);
-}
-
 export function createHistoryNavigator(canvas: HistoryCanvasLike, options: HistoryNavigatorOptions): HistoryNavigator {
   let points = buildHistoryPoints(options.points);
+  let pointsSignature = pointsKey(points);
+  let vertices: Float32Array | undefined;
   let destroyed = false;
   let canvasContext: Canvas2dLike | null = null;
   let canvasListener: ((event: Event) => void) | null = null;
   let device: GpuDeviceLike | null = null;
   let buffer: GpuBufferLike | null = null;
+  let bufferSize = 0;
   let pipeline: unknown;
   let gpuContext: GpuCanvasContextLike | null = null;
   let gpuFormat = '';
@@ -204,6 +203,7 @@ export function createHistoryNavigator(canvas: HistoryCanvasLike, options: Histo
   function releaseGpu() {
     buffer?.destroy();
     buffer = null;
+    bufferSize = 0;
     device?.destroy?.();
     device = null;
     pipeline = undefined;
@@ -212,9 +212,13 @@ export function createHistoryNavigator(canvas: HistoryCanvasLike, options: Histo
 
   function renderGpu() {
     if (destroyed || !device || !pipeline || !gpuContext) return;
-    const vertices = makeVertices(points);
-    buffer?.destroy();
-    buffer = device.createBuffer({ size: Math.max(4, vertices.byteLength), usage: VERTEX_BUFFER_USAGE });
+    vertices ??= makeVertices(points);
+    const nextSize = Math.max(4, vertices.byteLength);
+    if (!buffer || bufferSize < nextSize) {
+      buffer?.destroy();
+      buffer = device.createBuffer({ size: nextSize, usage: VERTEX_BUFFER_USAGE });
+      bufferSize = nextSize;
+    }
     device.queue.writeBuffer(buffer, 0, vertices.buffer);
     const encoder = device.createCommandEncoder();
     const pass = encoder.beginRenderPass({
@@ -305,8 +309,11 @@ export function createHistoryNavigator(canvas: HistoryCanvasLike, options: Histo
   return {
     update(nextSamples) {
       const nextPoints = buildHistoryPoints(nextSamples);
-      if (samePoints(points, nextPoints)) return;
+      const nextSignature = pointsKey(nextPoints);
+      if (nextSignature === pointsSignature) return;
       points = nextPoints;
+      pointsSignature = nextSignature;
+      vertices = undefined;
       if (canvasContext) renderCanvas2d(canvasContext, canvas, points);
       else renderGpu();
     },

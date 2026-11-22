@@ -17,11 +17,12 @@ export function pathName(path: string) {
   return path.split(/[\\/]/u).filter(Boolean).at(-1) ?? path;
 }
 
-export function DirectoryBrowser({ initialPath, onPick, pickLabel, disabled = false }: {
+export function DirectoryBrowser({ initialPath, onPick, pickLabel, disabled = false, listDirectories = api.folders }: {
   initialPath: string;
   onPick: (path: string) => void;
   pickLabel: string;
   disabled?: boolean;
+  listDirectories?: (path?: string, signal?: AbortSignal) => Promise<DirectoryListing>;
 }) {
   const [input, setInput] = useState(initialPath);
   const [listing, setListing] = useState<DirectoryListing>();
@@ -35,7 +36,7 @@ export function DirectoryBrowser({ initialPath, onPick, pickLabel, disabled = fa
     active.current = controller;
     setLoading(true);
     setError('');
-    void api.folders(path, controller.signal).then(next => {
+    void listDirectories(path, controller.signal).then(next => {
       if (controller.signal.aborted) return;
       setListing(next);
       setInput(next.path);

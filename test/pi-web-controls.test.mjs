@@ -48,6 +48,14 @@ test('host exposes model configuration, routes native slash without a model, nev
   assert.deepEqual(fixture.sent, [['/review concise', { deliverAs: 'followUp', expandPromptTemplates: true }]]);
 });
 
+test('native host reuses an unchanged snapshot and invalidates it after lifecycle changes', () => {
+  const fixture = fakeHost();
+  const first = fixture.host.snapshot();
+  assert.equal(fixture.host.snapshot(), first);
+  fixture.handlers.get('session_tree')();
+  assert.notEqual(fixture.host.snapshot(), first);
+});
+
 test('additional compaction is native, uses stored focus, and will not run on abort, queued input, or the same leaf twice', async () => {
   const fixture = fakeHost();
   fixture.ctx.model = fixture.model;

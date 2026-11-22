@@ -10,18 +10,29 @@ export function createPiWebHub({ distDir }) {
   let binding, live, starting;
   const streams = new Map();
   const clients = new Set();
+  let serializedSnapshot, serializedSnapshotObject;
   const isBound = host => binding === host;
-  function broadcast(event, data) {
+  function broadcastPayload(event, payload) {
     if (!streams.size) return;
-    const payload = JSON.stringify(data);
     for (const send of streams.values()) send(event, payload);
+  }
+  function broadcast(event, data) {
+    broadcastPayload(event, JSON.stringify(data));
+  }
+  function statePayload(host) {
+    const value = host.snapshot();
+    if (value !== serializedSnapshotObject) {
+      serializedSnapshotObject = value;
+      serializedSnapshot = JSON.stringify(value);
+    }
+    return serializedSnapshot;
   }
   function publish(host, event, data) {
     if (isBound(host)) broadcast(event, data);
   }
   function publishState(host) {
     if (!streams.size || !isBound(host)) return;
-    try { broadcast('state', host.snapshot()); }
+    try { broadcastPayload('state', statePayload(host)); }
     catch { /* Pi may invalidate a previously bound runtime during switch/reload. */ }
   }
   function bind(host) {
@@ -49,7 +60,7 @@ export function createPiWebHub({ distDir }) {
     if (name === 'state') return json(res, 200, host.snapshot());
     if (name === 'qq' && readOnly) return json(res, 200, host.qqSnapshot());
     if (name === 'events') {
-      const snapshot = JSON.stringify(host.snapshot());
+      const snapshot = statePayload(host);
       const send = openEvents(res, clients);
       streams.set(res, send);
       res.once('close', () => streams.delete(res));

@@ -1,6 +1,6 @@
 {
   "name": "deeppi",
-  "version": "2.0.145",
+  "version": "2.1.0",
   "description": "A local Web companion for Pi's native coding-agent sessions",
   "keywords": [
     "pi-package",
@@ -27,13 +27,17 @@
   "engines": {
     "node": ">=22.19.0"
   },
+  "bin": {
+    "deeppi-web": "server/pi-web/index.mjs"
+  },
   "scripts": {
+    "pi-web": "node server/pi-web/index.mjs",
     "build": "node scripts/build.mjs",
     "start": "node server/index.mjs",
     "demo": "node server/index.mjs --demo",
     "test": "node --test",
     "check": "tsc --noEmit",
-    "prepack": "npm run build"
+    "prepack": "node scripts/build.mjs"
   },
   "dependencies": {
     "@earendil-works/pi-schema": "1.6.0",

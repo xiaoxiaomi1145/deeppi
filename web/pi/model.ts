@@ -79,19 +79,23 @@ export const statusLabels: Record<SessionStatus, string> = {
 export function applyPiDeltas<T extends Pick<PiState, 'status' | 'messages'>>(state: T, deltas: readonly Delta[], now = Date.now()): T {
   if (state.status !== 'running') return state;
   let next: MessageView[] | undefined;
+  const indices = new Map<string, number>();
+  state.messages.forEach((message, index) => indices.set(message.id, index));
   for (const delta of deltas) {
     if (!delta.messageId || (!delta.text && !delta.thinking)) continue;
     const current = next ?? state.messages;
-    let index = current.length - 1;
-    while (index >= 0 && current[index].id !== delta.messageId) index -= 1;
-    const previous = current[index];
+    const index = indices.get(delta.messageId) ?? -1;
+    const previous = index >= 0 ? current[index] : undefined;
     if (previous && (previous.role !== 'assistant' || (previous.state && previous.state !== 'running'))) continue;
     const message: MessageView = previous ?? { id: delta.messageId, role: 'assistant', state: 'running', text: '', timestamp: now };
     const patched = { ...message, text: message.text + (delta.text ?? '') };
     if (delta.thinking) patched.thinking = (message.thinking ?? '') + delta.thinking;
     next ??= state.messages.slice();
     if (previous) next[index] = patched;
-    else next.push(patched);
+    else {
+      indices.set(delta.messageId, next.length);
+      next.push(patched);
+    }
   }
   return next ? { ...state, messages: next } : state;
 }

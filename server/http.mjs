@@ -40,16 +40,26 @@ function trustedHost(req) {
   return Number(host[1] || 80) === req.socket.localPort;
 }
 
-async function staticFile(req, res, path, distDir) {
+async function staticFile(req, res, path, distDir, indexFile) {
   if (req.method !== 'GET' && req.method !== 'HEAD') throw new AppError(405, '不支持此请求方法。');
-  const relative = path === '/' ? 'index.html' : path.slice(1);
-  if (!/^(?:index\.html|LICENSE|THIRD_PARTY_NOTICES|favicon\.ico|assets\/[a-zA-Z0-9_.-]+)$/u.test(relative)) {
+  const isIndex = path === '/' || path === '/index.html';
+  const relative = isIndex ? indexFile : path.slice(1);
+  if (!isIndex && !/^(?:LICENSE|THIRD_PARTY_NOTICES|favicon\.ico|assets\/[a-zA-Z0-9_.-]+)$/u.test(relative)) {
     throw new AppError(404, '页面不存在。');
   }
-  const target = resolve(distDir, relative);
+  let target = resolve(distDir, relative);
   let info;
   try { info = await stat(target); } catch (error) {
     if (error.code !== 'ENOENT') throw error;
+  }
+  // dist/pi reuses the root notice generated alongside dist/. This keeps
+  // package storage down while preserving a discoverable URL in both apps.
+  if (!info?.isFile() && relative === 'THIRD_PARTY_NOTICES') {
+    const shared = resolve(distDir, '..', relative);
+    try {
+      const sharedInfo = await stat(shared);
+      if (sharedInfo.isFile()) { target = shared; info = sharedInfo; }
+    } catch (error) { if (error.code !== 'ENOENT') throw error; }
   }
   if (!info?.isFile()) {
     if (relative === 'index.html') throw new AppError(503, '页面还未构建，请在 Deeppi 项目中运行 npm run build。');
@@ -60,7 +70,7 @@ async function staticFile(req, res, path, distDir) {
   else createReadStream(target).on('error', () => res.destroy()).pipe(res);
 }
 
-export function createLoopbackServer({ distDir, accessToken, api }) {
+export function createLoopbackServer({ distDir, accessToken, api, indexFile = 'index.html' }) {
   const expected = Buffer.from(`Bearer ${accessToken}`);
   const server = createServer(async (req, res) => {
     res.setHeader('content-security-policy', contentPolicy);
@@ -70,7 +80,7 @@ export function createLoopbackServer({ distDir, accessToken, api }) {
       if (!trustedHost(req)) throw new AppError(403, '请通过本机地址打开 Deeppi。');
       if (!req.url?.startsWith('/') || req.url.startsWith('//')) throw new AppError(400, '请求路径无效。');
       const url = new URL(req.url, 'http://localhost');
-      if (!url.pathname.startsWith('/api/')) return await staticFile(req, res, url.pathname, distDir);
+      if (!url.pathname.startsWith('/api/')) return await staticFile(req, res, url.pathname, distDir, indexFile);
       if (req.headers['sec-fetch-site'] === 'cross-site' ||
           (req.headers.origin && req.headers.origin !== `http://${req.headers.host}`)) {
         throw new AppError(403, '请求来源不匹配。');

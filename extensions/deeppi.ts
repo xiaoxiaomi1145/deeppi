@@ -20,7 +20,8 @@ export default function deeppi(pi: ExtensionAPI) {
   const resources = createPiResources({ pi, agentDir, configDirName: CONFIG_DIR_NAME, parseFrontmatter });
   const catalog = createPiCatalog({ SessionManager, projectBranch });
   const allowEnvironmentModel = registerPiEnvironment(pi);
-  const qq = getQqService({ agentDir, cleanupSession: cleanupSessionResources });
+  // RPC workers share the Pi profile, but the TUI owns the QQ receiver.
+  const qq = process.env.DEEPPI_PI_WEB_WORKER === '1' ? undefined : getQqService({ agentDir, cleanupSession: cleanupSessionResources });
   const webModels = createWebModels({ pi, agentDir });
   const host = createPiHost({ pi, addons, resources, catalog, hub, thinkingLevels: getSupportedThinkingLevels,
     clampThinking: clampThinkingLevel, allowEnvironmentModel, qq, webModels, stripFrontmatter });

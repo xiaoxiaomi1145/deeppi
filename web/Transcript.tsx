@@ -157,8 +157,9 @@ export function Transcript({ messages }: TranscriptProps) {
   const [showJump, setShowJump] = useState(false);
   const [selectedRoundId, setSelectedRoundId] = useState<string | null>(null);
   const rounds = useMemo(() => buildRounds(messages), [messages]);
+  const roundIndex = useMemo(() => new Map(rounds.map((round, index) => [round.id, index] as const)), [rounds]);
   const window = useMemo(() => selectRoundWindow(rounds, { revealedEarlier }), [rounds, revealedEarlier]);
-  const selectedIndex = Math.max(0, rounds.findIndex((round) => round.id === selectedRoundId));
+  const selectedIndex = Math.max(0, selectedRoundId ? (roundIndex.get(selectedRoundId) ?? 0) : 0);
 
   function goToRound(id: string, index: number) {
     setSelectedRoundId(id);
@@ -255,7 +256,7 @@ export function Transcript({ messages }: TranscriptProps) {
             <Round
               key={round.id}
               round={round}
-              index={rounds.findIndex((candidate) => candidate.id === round.id)}
+              index={roundIndex.get(round.id) ?? 0}
               register={registerRound(round.id)}
             />
           ))}

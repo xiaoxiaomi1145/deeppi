@@ -55,9 +55,14 @@ function addBlock(round: TranscriptRound, message: MessageView) {
     } else {
       round.blocks.push({ kind: 'tools', tools: [message] });
     }
-    round.toolSummary = summarizeTools(
-      round.blocks.flatMap((block) => block.kind === 'tools' ? block.tools : []),
-    );
+    // Tool messages are appended in transcript order. Keep the summary as a
+    // small counter instead of flattening every preceding tool block for each
+    // new tool (which made long tool-heavy rounds quadratic).
+    round.toolSummary = {
+      total: round.toolSummary.total + 1,
+      running: round.toolSummary.running + (message.state === 'running' ? 1 : 0),
+      errors: round.toolSummary.errors + (message.state === 'error' ? 1 : 0),
+    };
     return;
   }
 

@@ -4,15 +4,31 @@
 
 这个项目可能不会维护得太频繁。大部分功能都是按我自己的需求做的，也许没那么实用，不一定适合每个人。
 
-Deeppi 是 [Pi](https://github.com/earendil-works/pi) 的本机 Web 插件，界面基于 [DeepSeek chat-demo](https://github.com/deepseek-ai/chat-demo)。Web 与 TUI 共用同一个 Pi 会话、模型、工具和原生记录，不另起一份聊天。可选的 Deeppi 增强压缩、Bash 工具库以及 QQ 桥接默认关闭。
+Deeppi 是 [Pi](https://github.com/earendil-works/pi) 的本机 Web 前端，界面基于 [DeepSeek chat-demo](https://github.com/deepseek-ai/chat-demo)。可以独立管理 Pi 工作区和会话，也可以附到当前 Pi 终端。插件的可选增强压缩、Bash 工具库以及 QQ 桥接默认关闭。
 
-## 安装和打开
+## 独立 Pi Web（不用先开 TUI）
 
-需要 Node.js 22.19.0 或更新版本，已验证 Pi **1.6.0**。在 Deeppi 源码目录运行：
+需要 Node.js 22.19.0 或更新版本、pnpm 10.26 或更新版本，已验证 Pi **1.6.0**。在源码目录运行：
 
 ```sh
-npm ci
-npm run build
+pnpm install --frozen-lockfile
+pnpm build
+pnpm pi-web
+```
+
+1. 在**同一台机器**的浏览器打开终端打印的完整链接。页面只监听 `127.0.0.1`，默认使用空闲端口；可设置 `DEEPPI_PI_WEB_PORT=3211` 指定端口。终端 `Ctrl+C` 结束服务。
+2. 在侧栏添加本机可访问的目录，选择工作区后点「新建会话」。已有 Pi 会话可以先预览，点「打开会话」才切换；预览不会影响正在运行的会话。
+3. 后端运行真实的 `pi --mode rpc`，只在打开会话时启动。保留 Pi 原生模型、登录和会话目录，使用原生消息流、队列/引导、停止与压缩。同一 Web 服务一次只运行一个会话；生成或队列结束后再切换。不要用独立 Web 与 TUI 同时写同一份 Pi 会话。
+
+程序按 `DEEPPI_PI_CLI`（可执行路径或 Node 入口）、项目中已安装的 Pi、`PATH` 中的 `pi` 搜索，不会自动下载 Pi。复用当前用户的 `HOME`、`PI_CODING_AGENT_DIR`、Pi 模型配置与登录；工作区收藏和未发送消息的空会话元数据保存在 Pi 数据目录下的 `deeppi-rpc-web/`，不迁移原生会话。安装打包产物后，可直接运行其 `deeppi-web` 命令，使用方式相同。独立入口不启动 Deeppi 的 QQ 桥接，也不控制已经运行的 Pi TUI。
+
+## 安装和打开 TUI 插件
+
+在 Deeppi 源码目录运行：
+
+```sh
+pnpm install --frozen-lockfile
+pnpm build
 pi install "$PWD"
 ```
 
@@ -54,21 +70,22 @@ pi install "$PWD"
 
 在 Web 中打开「Pi 会话设置 → QQ」。支持反向 WebSocket，或带签名的反向 HTTP 加 OneBot 出站 HTTP API。**保存配置 → 开始监听 → 测试连接 → 开启自动回复**。私聊、群聊、用户准入、工具权限、QQ 模型、思考滑块、压缩、缓存和表情可独立配置。详见[连接与权限指南](<docs/onebot-qq.md>)。
 
-## 保留独立模式
+## 兼容旧版模式
 
-已有数据无需迁移。源码目录仍提供 `npm start`（独立真实模型模式，默认本机端口 `3210`）和 `npm run demo`（无密钥离线演示）；它们不读取或覆盖 Pi 原生记录。独立版默认数据在启动目录的 `.deeppi/`，可以用 `DEEPPI_DATA_DIR` 指定。独立版的 Bash 同样默认关闭，需 `npm start -- --allow-bash` 并在会话内打开；独立版自己的子代理、工作区设置和会话压缩保留。旧会话不会自动导入 Pi。
+已有数据无需迁移。`pnpm start`（默认本机端口 `3210`）和 `pnpm demo`（无密钥离线演示）仍运行旧版，不读取或覆盖 Pi 原生记录。旧版的数据默认在启动目录的 `.deeppi/`，可以用 `DEEPPI_DATA_DIR` 指定。Bash 默认关闭，需 `pnpm start --allow-bash` 并在会话内打开；旧版的子代理、工作区设置和会话压缩保留。旧会话不会自动导入 Pi。
 
 ## 开发和发布
 
 ```sh
-npm run check
-npm run build
-npm test
-python scripts/smoke-pi.py  # POSIX；真实 Pi CLI + 本机模型/OneBot 测试端
-npm pack --dry-run
+pnpm check
+pnpm build
+pnpm test
+python3 scripts/smoke-pi.py      # POSIX；实际 Pi TUI、模型与 OneBot 本机测试端
+python3 scripts/smoke-pi-web.py  # POSIX；pnpm pi-web 与实际 Pi RPC 两工作区往返
+pnpm pack
 ```
 
-`npm test` 不需要模型密钥。`npm pack` 会预构建两个 Web 入口，只打包发布所需文件；此仓库未在这里发布到 npm。执行真实模型请求时，Pi 或 QQ 会把各自需要的对话上下文发给所选模型服务商。访问链接只供自己使用，Web 和 OneBot 接收端只监听本机，不要暴露到公网。详见[安全与隐私](<SECURITY.md>)。
+自动测试不需要模型密钥。`pnpm pack` 会预构建浏览器资源，只打包发布所需文件；此仓库未在这里发布到 npm。执行真实模型请求时，Pi 或 QQ 会把各自需要的对话上下文发给所选模型服务商。访问链接只供自己使用，Web 和 OneBot 接收端只监听本机，不要暴露到公网。详见[安全与隐私](<SECURITY.md>)。
 
 Deeppi 采用 [MIT 许可证](<LICENSE>)。DeepSeek 界面复用见[来源清单](<web/UPSTREAM.md>)；Pi、WebSocket 依赖和其他上游声明见[第三方声明](<THIRD_PARTY_NOTICES>)。项目不是 DeepSeek、Pi、腾讯 QQ 或 OneBot 的官方发行版。
 

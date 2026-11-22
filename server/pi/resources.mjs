@@ -9,6 +9,13 @@ const namespace = name => name.replaceAll('-', '_');
 const skillsFor = pi => pi.getCommands().filter(command => command.source === 'skill' && command.name.startsWith('skill:'))
   .map(command => ({ name: command.name.slice(6), description: command.description ?? '' }));
 
+function fileStamp(path) {
+  try {
+    const info = statSync(path);
+    return `${info.mtimeMs}:${info.size}`;
+  } catch { return 'missing'; }
+}
+
 function configFile(path) {
   try {
     if (statSync(path).size > 1024 * 1024) return [];
@@ -54,6 +61,12 @@ function registration(input) {
 
 export function createPiResources({ pi, agentDir, configDirName, parseFrontmatter }) {
   const own = new Set();
+  let snapshotCache;
+  let revision = 0;
+  function invalidate() {
+    revision += 1;
+    snapshotCache = undefined;
+  }
 
   function configured(ctx) {
     const result = new Map();
@@ -74,6 +87,11 @@ export function createPiResources({ pi, agentDir, configDirName, parseFrontmatte
   }
 
   function snapshot(ctx, tools) {
+    const trusted = ctx.isProjectTrusted();
+    const files = [join(agentDir, 'mcp.json')];
+    if (trusted) files.push(join(ctx.cwd, configDirName, 'mcp.json'));
+    const key = `${revision}\n${ctx.cwd}\n${trusted ? 'trusted' : 'untrusted'}\n${files.map(fileStamp).join('|')}\n${tools.map(tool => `${tool.name}:${tool.active ? 1 : 0}`).join('|')}`;
+    if (snapshotCache?.key === key) return snapshotCache.value;
     const rows = new Map();
     const configuredServers = configured(ctx);
     const add = (name, config, source) => {
@@ -84,7 +102,9 @@ export function createPiResources({ pi, agentDir, configDirName, parseFrontmatte
     };
     for (const { name, config } of pi.getMcpServers()) add(name, config, own.has(name) ? 'session' : 'pi');
     for (const [name, config] of configuredServers) add(name, config, 'pi');
-    return { skills: skillsFor(pi), mcp: [...rows.values()].sort((a, b) => a.name.localeCompare(b.name)), canImport: true };
+    const value = { skills: skillsFor(pi), mcp: [...rows.values()].sort((a, b) => a.name.localeCompare(b.name)), canImport: true };
+    snapshotCache = { key, value };
+    return value;
   }
 
   async function importSkill(markdown) {
@@ -108,6 +128,7 @@ export function createPiResources({ pi, agentDir, configDirName, parseFrontmatte
     }
     try { await writeFile(join(dest, 'SKILL.md'), markdown, { flag: 'wx', mode: 0o600, encoding: 'utf8' }); }
     catch (error) { await rmdir(dest).catch(() => {}); throw error; }
+    invalidate();
     return { reloadRequired: true, name };
   }
 
@@ -122,14 +143,16 @@ export function createPiResources({ pi, agentDir, configDirName, parseFrontmatte
       if (!own.has(name)) throw new AppError(404, '仅可移除通过 Deeppi 在此会话登记的服务。');
       pi.unregisterMcpServer(name);
       own.delete(name);
+      invalidate();
     } else if (input.action === 'register-mcp') {
       const config = registration(input);
       const taken = [...configured(ctx).keys(), ...pi.getMcpServers().map(item => item.name)].some(other => namespace(other) === namespace(name));
       if (taken) throw new AppError(409, '该 MCP 名称已被使用。');
       try { pi.registerMcpServer(name, config); } catch { throw new AppError(400, 'Pi 未接受此 MCP 配置，请查看终端中的 /mcp。'); }
       own.add(name);
+      invalidate();
     } else throw new AppError(400, '资源操作无效。');
     return { reloadRequired: false, name };
   }
-  return { snapshot, apply, skills: () => skillsFor(pi) };
+  return { snapshot, apply, invalidate, skills: () => skillsFor(pi) };
 }
